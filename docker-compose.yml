@@ -1,0 +1,184 @@
+version: '3.8'
+
+services:
+  # Zookeeper for Kafka
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.1
+    hostname: zookeeper
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    volumes:
+      - zookeeper-data:/var/lib/zookeeper/data
+
+  # Kafka Broker
+  kafka:
+    image: confluentinc/cp-kafka:7.4.1
+    hostname: kafka
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "9101:9101"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092
+      KAFKA_METRIC_REPORTERS: io.confluent.metrics.reporter.ConfluentMetricsReporter
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_CONFLUENT_METRICS_REPORTER_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_CONFLUENT_METRICS_REPORTER_TOPIC_REPLICAS: 1
+      KAFKA_CONFLUENT_METRICS_ENABLE: 'true'
+      KAFKA_CONFLUENT_SUPPORT_CUSTOMER_ID: anonymous
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+      KAFKA_LOG_RETENTION_HOURS: 168
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+
+  # MySQL Master Database
+  mysql-master:
+    image: mysql:8.0
+    hostname: mysql-master
+    container_name: mysql-master
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: root_password
+      MYSQL_DATABASE: inventory
+      MYSQL_USER: master_user
+      MYSQL_PASSWORD: master_password
+    command: --server-id=1 --log-bin=mysql-bin --binlog-format=ROW --binlog-row-image=FULL --gtid-mode=ON --enforce-gtid-consistency=ON
+    volumes:
+      - mysql-master-data:/var/lib/mysql
+      - ./docker/mysql/init:/docker-entrypoint-initdb.d
+
+  # MySQL Slave Database 1
+  mysql-slave1:
+    image: mysql:8.0
+    hostname: mysql-slave1
+    container_name: mysql-slave1
+    ports:
+      - "3307:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: root_password
+      MYSQL_DATABASE: inventory
+      MYSQL_USER: slave_user
+      MYSQL_PASSWORD: slave_password
+    command: --server-id=2 --log-bin=mysql-bin --binlog-format=ROW --read-only=ON --super-read-only=ON
+    volumes:
+      - mysql-slave1-data:/var/lib/mysql
+
+  # MySQL Slave Database 2
+  mysql-slave2:
+    image: mysql:8.0
+    hostname: mysql-slave2
+    container_name: mysql-slave2
+    ports:
+      - "3308:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: root_password
+      MYSQL_DATABASE: inventory
+      MYSQL_USER: slave_user
+      MYSQL_PASSWORD: slave_password
+    command: --server-id=3 --log-bin=mysql-bin --binlog-format=ROW --read-only=ON --super-read-only=ON
+    volumes:
+      - mysql-slave2-data:/var/lib/mysql
+
+  # Kafka Connect with Debezium
+  kafka-connect:
+    image: debezium/connect:2.4
+    hostname: kafka-connect
+    container_name: kafka-connect
+    depends_on:
+      - kafka
+      - mysql-master
+    ports:
+      - "8083:8083"
+    environment:
+      BOOTSTRAP_SERVERS: kafka:29092
+      GROUP_ID: 1
+      CONFIG_STORAGE_TOPIC: my_connect_configs
+      OFFSET_STORAGE_TOPIC: my_connect_offsets
+      STATUS_STORAGE_TOPIC: my_connect_statuses
+      CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      STATUS_STORAGE_REPLICATION_FACTOR: 1
+    volumes:
+      - kafka-connect-data:/kafka/data
+
+  # MySQL Kafka Sync Tool
+  sync-tool:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    hostname: sync-tool
+    container_name: sync-tool
+    depends_on:
+      - kafka
+      - mysql-master
+      - mysql-slave1
+      - mysql-slave2
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      SPRING_DATASOURCE_MASTER_JDBC_URL: jdbc:mysql://mysql-master:3306/inventory?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+      SPRING_DATASOURCE_MASTER_USERNAME: master_user
+      SPRING_DATASOURCE_MASTER_PASSWORD: master_password
+      SPRING_DATASOURCE_SLAVE_DEFAULT_JDBC_URL: jdbc:mysql://mysql-slave1:3306/inventory?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+      SPRING_DATASOURCE_SLAVE_DEFAULT_USERNAME: slave_user
+      SPRING_DATASOURCE_SLAVE_DEFAULT_PASSWORD: slave_password
+    restart: unless-stopped
+
+  # Prometheus for monitoring
+  prometheus:
+    image: prom/prometheus:v2.45.0
+    hostname: prometheus
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+
+  # Grafana for dashboards
+  grafana:
+    image: grafana/grafana:10.1.0
+    hostname: grafana
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./docker/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./docker/grafana/datasources:/etc/grafana/provisioning/datasources
+
+volumes:
+  zookeeper-data:
+  kafka-data:
+  kafka-connect-data:
+  mysql-master-data:
+  mysql-slave1-data:
+  mysql-slave2-data:
+  prometheus-data:
+  grafana-data:
+
+networks:
+  default:
+    driver: bridge
