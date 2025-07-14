@@ -1,0 +1,60 @@
+apiVersion: v1
+kind: ServiceMonitor
+metadata:
+  name: mysql-kafka-sync-tool-monitor
+  labels:
+    app: mysql-kafka-sync-tool
+spec:
+  selector:
+    matchLabels:
+      app: mysql-kafka-sync-tool
+  endpoints:
+  - port: http
+    path: /api/actuator/prometheus
+    interval: 15s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: mysql-kafka-sync-tool-alerts
+  labels:
+    app: mysql-kafka-sync-tool
+spec:
+  groups:
+  - name: mysql-kafka-sync-tool
+    rules:
+    - alert: SyncToolDown
+      expr: up{job="mysql-kafka-sync-tool"} == 0
+      for: 1m
+      labels:
+        severity: critical
+      annotations:
+        summary: "MySQL Kafka Sync Tool is down"
+        description: "MySQL Kafka Sync Tool has been down for more than 1 minute."
+    
+    - alert: HighSyncLatency
+      expr: sync_latency_seconds{quantile="0.95"} > 3
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "High sync latency detected"
+        description: "Sync latency P95 is {{ $value }} seconds, which exceeds the 3-second threshold."
+    
+    - alert: HighErrorRate
+      expr: rate(sync_operations_failure_total[5m]) / rate(sync_operations_success_total[5m]) > 0.01
+      for: 2m
+      labels:
+        severity: critical
+      annotations:
+        summary: "High error rate in sync operations"
+        description: "Error rate is {{ $value | humanizePercentage }}, which exceeds the 1% threshold."
+    
+    - alert: KafkaMessageBacklog
+      expr: kafka_messages_received_total - kafka_messages_processed_total > 10000
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Kafka message backlog detected"
+        description: "There are {{ $value }} unprocessed messages in the Kafka queue."

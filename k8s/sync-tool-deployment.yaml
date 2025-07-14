@@ -1,0 +1,101 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mysql-kafka-sync-tool
+  labels:
+    app: mysql-kafka-sync-tool
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: mysql-kafka-sync-tool
+  template:
+    metadata:
+      labels:
+        app: mysql-kafka-sync-tool
+    spec:
+      containers:
+      - name: sync-tool
+        image: mysql-kafka-sync-tool:1.0.0
+        ports:
+        - containerPort: 8080
+        env:
+        - name: SPRING_PROFILES_ACTIVE
+          value: "k8s"
+        - name: SPRING_KAFKA_BOOTSTRAP_SERVERS
+          value: "kafka-service:9092"
+        - name: SPRING_DATASOURCE_MASTER_JDBC_URL
+          valueFrom:
+            secretKeyRef:
+              name: mysql-config
+              key: master-jdbc-url
+        - name: SPRING_DATASOURCE_MASTER_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: mysql-config
+              key: master-username
+        - name: SPRING_DATASOURCE_MASTER_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-config
+              key: master-password
+        - name: SPRING_DATASOURCE_SLAVE_DEFAULT_JDBC_URL
+          valueFrom:
+            secretKeyRef:
+              name: mysql-config
+              key: slave-jdbc-url
+        - name: SPRING_DATASOURCE_SLAVE_DEFAULT_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: mysql-config
+              key: slave-username
+        - name: SPRING_DATASOURCE_SLAVE_DEFAULT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-config
+              key: slave-password
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        readinessProbe:
+          httpGet:
+            path: /api/actuator/health/readiness
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /api/actuator/health/liveness
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-kafka-sync-tool-service
+spec:
+  selector:
+    app: mysql-kafka-sync-tool
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mysql-config
+type: Opaque
+stringData:
+  master-jdbc-url: "jdbc:mysql://mysql-master-service:3306/inventory?useSSL=false&serverTimezone=UTC"
+  master-username: "master_user"
+  master-password: "master_password"
+  slave-jdbc-url: "jdbc:mysql://mysql-slave-service:3306/inventory?useSSL=false&serverTimezone=UTC"
+  slave-username: "slave_user"
+  slave-password: "slave_password"
