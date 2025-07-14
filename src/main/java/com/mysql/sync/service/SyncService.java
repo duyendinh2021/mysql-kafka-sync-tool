@@ -227,14 +227,29 @@ public class SyncService {
                 .build();
         }
 
+        // Validate that we have before data to identify which row to update
+        if (before == null || before.isEmpty()) {
+            logger.warn("UPDATE operation without before data for table {}, slave {}. Cannot safely identify row to update.", 
+                       tableName, slaveId);
+            return SyncResult.builder()
+                .slaveId(slaveId)
+                .tableName(tableName)
+                .operation("UPDATE")
+                .status(SyncResult.Status.FAILED)
+                .message("UPDATE operation requires before data to identify target row")
+                .timestamp(startTime)
+                .processingTimeMs(Instant.now().toEpochMilli() - startTime.toEpochMilli())
+                .build();
+        }
+
         // Build UPDATE statement with WHERE clause based on before values
         String setClause = after.keySet().stream()
             .map(k -> k + " = ?")
             .collect(Collectors.joining(", "));
             
-        String whereClause = before != null && !before.isEmpty() ? 
-            before.keySet().stream().map(k -> k + " = ?").collect(Collectors.joining(" AND ")) :
-            "1=1"; // Fallback if no before data
+        String whereClause = before.keySet().stream()
+            .map(k -> k + " = ?")
+            .collect(Collectors.joining(" AND "));
 
         String sql = String.format("UPDATE %s SET %s WHERE %s", tableName, setClause, whereClause);
 
@@ -248,11 +263,9 @@ public class SyncService {
                 stmt.setObject(paramIndex++, value);
             }
             
-            // Set WHERE values
-            if (before != null) {
-                for (Object value : before.values()) {
-                    stmt.setObject(paramIndex++, value);
-                }
+            // Set WHERE values (we know before is not null due to validation above)
+            for (Object value : before.values()) {
+                stmt.setObject(paramIndex++, value);
             }
             
             int rowsAffected = stmt.executeUpdate();
