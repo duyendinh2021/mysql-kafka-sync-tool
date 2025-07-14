@@ -232,6 +232,28 @@ mvn verify
 - **End-to-End Latency**: < 3 seconds (P95)
 - **Supported Slaves**: Up to 50 concurrent slaves
 
+### Performance Benchmarking
+
+The project includes benchmark scripts to measure sync performance:
+
+#### Linux/Unix/macOS
+```bash
+./scripts/benchmark.sh
+```
+
+#### Windows PowerShell
+```powershell
+.\scripts\benchmark.ps1
+```
+
+Both scripts provide:
+- **INSERT throughput testing** with configurable record counts
+- **UPDATE throughput testing** to measure change replication speed
+- **Latency measurement** for end-to-end sync timing
+- **Comprehensive metrics** collection and reporting
+
+For detailed Windows setup instructions, see: [scripts/README-Windows.md](scripts/README-Windows.md)
+
 ### Optimization Tips
 
 1. **Kafka Configuration**
